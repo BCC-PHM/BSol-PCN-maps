@@ -1,3 +1,5 @@
+library(dplyr)
+
 
 ################################################################## 
 #          Download Population data from FingerTips              #
@@ -21,7 +23,7 @@ for (LA in names(BSol_LA_codes)) {
 }
 
 ################################################################## 
-#                    Process and Save Data                       #
+#               Combine Birmingham and Solihull                 #
 ##################################################################
 
 # Create BSol GP population data (by age)
@@ -39,6 +41,10 @@ BSol_GP_age_pop <- do.call(
 invisible(
   lapply(paste0(path_prefix, names(BSol_LA_codes), ".csv"), file.remove)
 )
+
+################################################################## 
+#                    Process and Save Data                       #
+##################################################################
 
 # Calculate total population for each GP
 BSol_GP_total_pops <- BSol_GP_age_pop %>%
