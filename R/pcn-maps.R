@@ -1,13 +1,22 @@
 # PCN location maps
-
 library("dplyr")
 library("BSol.mapR")
-
+library("tmap")
+library("stringr")
+library("grid")
+library("gridExtra")
 source("~/Main work/MiscCode/postcode_functions/postcode_functions.R")
 
-ward_localities <- read.csv("../data/ward_to_locality.csv") %>%
-  mutate(Ward = AreaName) %>%
-  select(Ward, Locality) 
+fill_colour <- "#6699ff"
+
+ward_localities <- read.csv("../data/ward-to-locality.csv") %>%
+  mutate(
+    Ward = AreaName,
+    Ward_label = str_wrap(Ward, 14)
+    ) %>%
+  select(Ward, Locality, Ward_label) 
+
+const_localities <- read.csv("../data/const-to-locality.csv")
 
 Mode <- function(x) {
   ux <- unique(x)
@@ -88,9 +97,9 @@ save_map(map, "../output/all-pcns.png")
 
 ##### Locality Zoom-in #####
 
-palette <- ggpubr::get_palette((c("#FFFFFF", "lightblue")), 20)
+palette <- ggpubr::get_palette((c("white", fill_colour)), 20)
 
-for (Locality_i in names(locality_lookup)){
+for (Locality_i in unique(ward_localities$Locality)){
   print(Locality_i)
   save_name <- paste0(
     "../output/", 
@@ -102,6 +111,9 @@ for (Locality_i in names(locality_lookup)){
   pcn_locs_i <- PCN_data %>%
     filter(
       Locality == Locality_i
+    ) %>%
+    mutate(
+      label = paste(Locality_i, "PCNs")
     )
 
   wards_i <- ward_localities %>%
@@ -112,26 +124,151 @@ for (Locality_i in names(locality_lookup)){
       )
     )
   
-  loc_map <- plot_map(
-    wards_i,
-    "highlight",
-    "Ward",
-    style = "fixed",
-    breaks = c(0,0.5,1),
-    labels = c("",Locality_i),
-    palette = palette
+  # Filter locality shape
+  locality_shape_i <- subset(
+    Locality,
+    Locality == Locality_i
+  ) 
+  
+  # Filter constituency shape
+  const_shape_i <- subset(
+    Constituency,
+    Cnsttnc %in% const_localities$Constituency[
+      const_localities$Locality == Locality_i
+    ]
   )
+  
+  # Filter ward shape
+  ward_shape_i <- subset(
+    Ward,
+    Ward %in% wards_i$Ward[wards_i$Locality == Locality_i]
+  ) 
+  ward_shape_i@data <- ward_shape_i@data %>%
+    left_join(
+      wards_i,
+      by = join_by(Ward)
+    )
+  
+  loc_map <- plot_empty_map(
+    const_names = F
+  ) +
+    tm_shape(
+      locality_shape_i
+    ) + 
+    tm_fill(
+      col = fill_colour
+    ) +
+    tm_shape(
+      ward_shape_i
+    ) + 
+    tm_borders(
+      col = "grey80", lwd = 0.4
+    ) +
+    tm_shape(
+      const_shape_i
+    ) +
+    tm_borders(
+      col = "grey40", lwd = 1.5
+    ) +
+    tm_text(
+      text = "Cnsttnc",
+      size = 0.8
+    )
   
   loc_map <- add_points(
     loc_map,
     pcn_locs_i,
     color = "hotpink",
-    size = 0.15
+    size = 0.2,
+    alpha = 0.6
+  ) +
+    tm_layout(frame = FALSE,
+              inner.margins = c(0.12,0,0.1,0.12),
+              bg.color = "transparent",
+              legend.position = c("LEFT", "TOP"),
+              legend.text.size = 0.6,
+              #title.position = c('LEFT', 'TOP'),
+              legend.width = 2,
+              legend.height = 3)
+  
+
+
+  
+  zoom_map_i <- tm_shape(locality_shape_i) +
+    # Invisible base layer to fix map zoom
+    tm_borders(lwd = 0) +
+    tm_fill(
+      col = fill_colour
+      ) +
+    # Add ward borders
+    tm_shape(ward_shape_i) +
+    tm_borders(lwd = 0.7) +
+    # Add thicker locality borders on top
+    tm_shape(locality_shape_i) +
+    tm_borders(lwd = 1.5, col = "grey40") +
+    # Overlay ward names
+    tm_shape(ward_shape_i) +
+    tm_text(
+      text = "Ward_label",
+      size = 0.4
+      ) +
+    tm_layout(frame = FALSE,
+              inner.margins = c(0.15,0.15,0.15,0.0),
+              bg.color = "transparent",
+              legend.position = c(0.2, 0.9),
+              legend.text.size = 0.6,
+              title.position = c('LEFT', 'TOP'),
+              legend.width = 2,
+              legend.height = 3) 
+  
+  zoom_map_i <- add_points(
+    zoom_map_i, 
+    pcn_locs_i,
+    color = "label",
+    palette = c("hotpink"),
+    size = 0.2,
+    alpha = 0.6
+  ) +
+    tm_layout(
+      legend.title.color ="white"
+      )
+  
+  
+
+  
+  combined_map <- cowplot::plot_grid(
+    tmap_grob(zoom_map_i),
+    tmap_grob(loc_map),
+    ncol = 2
   )
   
-  save_map(
-    loc_map,
-    save_name
+  comb_title <- paste(
+    Locality_i,
+    case_when(
+      Locality_i != "Solihull" ~ "Locality",
+      TRUE ~ ""
+    ),
+    "PCNs, Wards, and Constituencies"
   )
+  
+  x.grob <- textGrob(comb_title, gp=gpar(fontsize=15))
+  
+  #add to plot
+  combined_map <- grid.arrange(
+    arrangeGrob(
+      combined_map, 
+      top = x.grob
+      )
+    )
+  
+  combined_map
+  
+  ggplot2::ggsave(combined_map, 
+                  filename = paste("../output/png/",Locality_i,"_PCN_map.png",sep = ""),
+                  width = 10, height = 5.5 ,bg = "white", dpi=900)
+  
+  ggplot2::ggsave(combined_map, 
+                  filename = paste("../output/svg/",Locality_i,"_PCN_map.png",sep = ""),
+                  width = 10, height = 5.5 ,bg = "white", dpi=900)
   
 }
